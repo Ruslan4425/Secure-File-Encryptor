@@ -1,2 +1,10 @@
 .myvenv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
 *.swp
+*.key
+*.pem
+*.enc
+*.enc.json
+*.tmp
