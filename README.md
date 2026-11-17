@@ -10,7 +10,7 @@
 [![Cipher](https://shields.io)](#cryptographic-stack)
 [![Signature](https://shields.io)](#cryptographic-stack)
 [![KDF](https://shields.io)](#cryptographic-stack)
-[![Tests](https://shields.io)](#security-testing)
+[![Security Tests](https://github.com)](https://github.com)
 
 </div>
 
@@ -70,7 +70,7 @@ flowchart LR
 ```bash
 # 1. Clone the repository and install dependencies
 git clone https://github.com
-cd simple_AES
+cd Secure-File-Encryptor
 pip install -r requirements.txt
 
 # 2. Generate an Ed25519 key pair
@@ -85,9 +85,27 @@ python AES.py decrypt -i secret.enc.json -o decrypted.txt
 
 ---
 
+## 🧪 Security Testing
+
+The project includes negative security tests built with `pytest` to simulate real-world attack vectors:
+
+```text
+tests/test_encryptor.py::test_happy_path_and_empty_file         PASSED [ 16%]
+tests/test_encryptor.py::test_bit_flip_in_ciphertext            PASSED [ 33%]
+tests/test_encryptor.py::test_aad_header_tampering              PASSED [ 50%]
+tests/test_encryptor.py::test_malformed_json_and_missing_fields PASSED [ 66%]
+tests/test_encryptor.py::test_downgrade_and_dos_argon_params    PASSED [ 83%]
+tests/test_encryptor.py::test_wrong_password_and_wrong_key      PASSED [100%]
+```
+
+Run tests locally:
+```bash
+pytest -v
+```
+
 ---
 
-## 🗺️ Roadmap (Project Evolution)
+## 🗺️ Roadmap & Project Structure
 
 * **[v1.0.1] (Current Release):** JSON container, `Encrypt-then-Sign` scheme, negative security test suite, and threat model.
 * **[v2.0.0] (Next Milestone):** Streaming binary format (64 KB chunks) for arbitrarily large files, anti-truncation AAD counters, and explicit RAM zeroization.
