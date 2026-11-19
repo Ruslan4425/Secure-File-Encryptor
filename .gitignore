@@ -8,3 +8,4 @@ __pycache__/
 *.enc
 *.enc.json
 *.tmp
+*.txt

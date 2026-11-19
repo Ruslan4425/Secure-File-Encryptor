@@ -69,7 +69,6 @@ flowchart LR
 
 ```bash
 # 1. Клонируйте репозиторий и установите зависимости
-git clone https://github.com
 cd Secure-File-Encryptor
 pip install -r requirements.txt
 
@@ -77,10 +76,10 @@ pip install -r requirements.txt
 python AES.py keygen
 
 # 3. Зашифруйте файл
-python AES.py encrypt -i secret.txt -o secret.enc.json
+python AES.py encrypt secret.txt secret.enc.json
 
 # 4. Расшифруйте файл и проверьте подпись
-python AES.py decrypt -i secret.enc.json -o decrypted.txt
+python AES.py decrypt secret.enc.json decrypted.txt
 ```
 
 ---
@@ -107,5 +106,5 @@ pytest -v
 
 ## 🗺️ План развития и структура проекта
 
-* **[v1.0.1] (Текущий релиз):** JSON-контейнер, схема `Encrypt-then-Sign`, набор негативных тестов безопасности и модель угроз.
-* **[v2.0.0] (Следующий этап):** Потоковый бинарный формат (чанки по 64 КБ) для файлов любого размера, счетчики чанков в AAD от обрезания файла и явная очистка ключей в RAM.
+* **[v1.0] (Текущий релиз):** JSON-контейнер, схема `Encrypt-then-Sign`, набор негативных тестов безопасности и модель угроз.
+* **[v2.0] (Следующий этап):** Потоковый бинарный формат (чанки по 64 КБ) для файлов любого размера, счетчики чанков в AAD от обрезания файла и явная очистка ключей в RAM.
