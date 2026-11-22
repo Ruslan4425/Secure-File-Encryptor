@@ -109,3 +109,6 @@ pytest -v
 * **[v1.0] (Current Release):** JSON container, `Encrypt-then-Sign` scheme, negative security test suite, and threat model.
 * **[v2.0] (Next Milestone):** Streaming binary format (64 KB chunks) for files of any size, chunk counters in AAD to prevent file truncation, and explicit key zeroing in RAM.
 
+## Disclaimer
+This project was created for educational and portfolio purposes. The software is provided "as is", without warranty of any kind. Always keep backups of important files before encrypting them.
+
