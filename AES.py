@@ -4,6 +4,7 @@ import argparse
 import getpass
 import ctypes
 import struct
+import hashlib
 
 #Delete
 import base64
@@ -31,6 +32,7 @@ MAGIC = b"AESS"
 CHUNK_SIZE = 64 * 1024 # 64 KB blocks
 HEADER_FORMAT = ">4sBIII16s12s"
 HEADER_SIZE = struct.calcsize(HEADER_FORMAT) # 45 bytes
+BLAKE2B_DIGEST_SIZE = 32
 
 MIN_TIME_COST = 2
 MAX_TIME_COST = 10
@@ -97,37 +99,20 @@ def validate_parametr_Argon2(time_cost: int, memory_cost: int, parallelism_cost:
     if parallelism_cost < MIN_PARALLELISM or parallelism_cost > MAX_PARALLELISM:
         raise ValueError("Недопустимое значение Parallelism")
 
-def encode64(data: bytes) -> str:
-    return base64.b64encode(data).decode("ascii")
-
-
-def decode64(data: str) -> bytes:
-    return base64.b64decode(data, validate=True)
-
-
-def canonical_json(data: dict) -> bytes:
-    return json.dumps(
-        data,
-        sort_keys=True,
-        separators=(",", ":"),
-        ensure_ascii=False,
-    ).encode("utf-8")
-
-
 def derive_key(password: bytearray,
                salt: bytes, time_cost: int = ARGON_TIME_COST,
                memory_cost: int = ARGON_MEMORY_COST,
                parallelism_cost: int = ARGON_PARALLELISM) -> bytearray:
                
-    return hash_secret_raw(
+    return bytearray( hash_secret_raw(
         secret=bytes(password),
         salt=salt,
         time_cost=time_cost,
         memory_cost=memory_cost,
         parallelism=parallelism_cost,
         hash_len=KEY_SIZE,
-        type=Type.ID,
-    )
+        type=Type.ID,)
+        )
 
 
 def generate_signing_keys():
@@ -199,9 +184,10 @@ def load_public_key() -> Ed25519PublicKey:
     return load_pem_public_key(pub_path.read_bytes()) 
 
 
-def encrypt_file(input_file: str, output_file: str, password: str):
+def encrypt_file(input_file: str, output_file: str, password: bytearray):
     input_path = Path(input_file)
     output_path = Path(output_file)
+    tmp_patch = output_path.with_suffix(output_path.suffix + ".tmp")
 
     if not input_path.is_file():
         raise FileNotFoundError(f"Исходный файл '{input_file}' не найден.")
@@ -209,158 +195,82 @@ def encrypt_file(input_file: str, output_file: str, password: str):
     if input_path.resolve() == output_path.resolve():
         raise ValueError("Входной и выходной файлы не могут совпадать.")
 
-    print("[*] Чтение исходного файла...")
-    plain_text = input_path.read_bytes()
-
     print("[*] Генерация Salt и Nonce...")
     salt = os.urandom(SALT_SIZE)
-    nonce = os.urandom(NONCE_SIZE)
-
-    print("[*] Получение ключа через Argon2id...")
-    aes_key = derive_key(password, salt)
-
-    header = {
-        "version": VERSION,
-        "algorithm": "AES-256-GCM",
-        "kdf": "Argon2id",
-        "argon_time": ARGON_TIME_COST,
-        "argon_memory": ARGON_MEMORY_COST,
-        "argon_parallelism": ARGON_PARALLELISM,
-        "salt": encode64(salt),
-        "nonce": encode64(nonce),
-    }
-
-    aad = canonical_json(header)
-
-    print("[*] Шифрование AES-256-GCM...")
-    aes = AESGCM(aes_key)
-    cipher_text = aes.encrypt(nonce, plain_text, aad)
-
-    print("[*] Создание цифровой подписи Ed25519...")
+    base_nonce = os.urandom(NONCE_SIZE)
     private_key = load_private_key()
 
-    signed_data = {
-        **header,
-        "cipher_text": encode64(cipher_text),
-    }
+    aes_key = None
 
-    signature = private_key.sign(canonical_json(signed_data))
+    try:
+        aes_key = derive_key(password, salt)
+        aes = AESGCM(bytes(aes_key))
 
-    payload = {
-        **signed_data,
-        "signature": encode64(signature),
-    }
+        header = struct.pack(
+            HEADER_FORMAT,
+            MAGIC,
+            VERSION,
+            ARGON_TIME_COST,
+            ARGON_MEMORY_COST,
+            ARGON_PARALLELISM,
+            salt,
+            base_nonce,   
+        )
+        hasher = hashlib.blake2b(digest_size=BLAKE2B_DIGEST_SIZE)
+        hasher.update(header)
 
-    output_path.write_text(
-        json.dumps(payload, indent=4),
-        encoding="utf-8",
-    )
+        with open(input_path, "rb") as f_in, open(tmp_patch, "wb") as f_out:
+            f_out.write(header)
 
+            chunk_index = 0
+
+            while True:
+                chunk = f_in.read(CHUNK_SIZE)
+                is_last = len(f_in.peek(1)) == 0
+
+                chunk_nonce = derive_chunk_nonce(base_nonce, chunk_index)
+                aad = header + struct.pack(">Q?", chunk_index, is_last)
+                cipher_text = aes.encrypt(chunk_nonce, chunk, aad)
+
+                lenght_prefix = struct.pack(">I", len(cipher_text))
+
+                hasher.update(lenght_prefix)
+                hasher.update(cipher_text)
+
+                f_out.write(lenght_prefix)
+                f_out.write(cipher_text)
+
+                chunk_index += 1
+
+                if is_last:
+                    break
+
+            signature = private_key.sign(hasher.digest())
+            f_out.write(signature)
+            f_out.flush()
+            os.fsync(f_out.fileno())
+            
+        os.replace(tmp_patch, output_path)
+
+    except Exception:
+        if tmp_patch.exists():
+            tmp_patch.unlink()
+        raise
+    finally:
+        if aes_key is not None:
+            memory_cleaner(aes_key)
+    
     print(f"[+] Шифрование завершено. Результат сохранен в '{output_file}'.")
 
 def decrypt_file(input_file: str, output_file: str, password: str):
     encrypted_path = Path(input_file)
     output_path = Path(output_file)
 
-    if not encrypted_path.is_file():
-        raise FileNotFoundError(f"Зашифрованный файл '{input_file}' не найден.")
-
+    if not encrypted_path.exists:
+        raise ValueError("Файл не найден")
     if encrypted_path.resolve() == output_path.resolve():
-        raise ValueError("Входной и выходной файлы не могут совпадать.")
-
-    print("[*] Чтение зашифрованного контейнера...")
-    try:
-        payload = json.loads(encrypted_path.read_text(encoding="utf-8"))
-    except json.JSONDecodeError:
-        raise ValueError("Файл поврежден или имеет неверный формат JSON.")
-
-    required_fields = {
-        "version",
-        "algorithm",
-        "kdf",
-        "argon_time",
-        "argon_memory",
-        "argon_parallelism",
-        "salt",
-        "nonce",
-        "cipher_text",
-        "signature",
-    }
-    if not required_fields.issubset(payload.keys()):
-        raise ValueError("В контейнере отсутствуют обязательные поля заголовка.")
-
-    if payload["version"] != VERSION:
-        raise ValueError(f"Неподдерживаемая версия формата: {payload['version']}.")
-
-    if payload["algorithm"] != "AES-256-GCM":
-        raise ValueError("Неподдерживаемый алгоритм шифрования.")
-
-    if payload["kdf"] != "Argon2id":
-        raise ValueError("Неподдерживаемый алгоритм KDF.")
-
-    if (
-        payload["argon_time"] != ARGON_TIME_COST
-        or payload["argon_memory"] != ARGON_MEMORY_COST
-        or payload["argon_parallelism"] != ARGON_PARALLELISM
-    ):
-        raise ValueError("Некорректные параметры Argon2id.")
-
-    header = {
-        "version": payload["version"],
-        "algorithm": payload["algorithm"],
-        "kdf": payload["kdf"],
-        "argon_time": payload["argon_time"],
-        "argon_memory": payload["argon_memory"],
-        "argon_parallelism": payload["argon_parallelism"],
-        "salt": payload["salt"],
-        "nonce": payload["nonce"],
-    }
-
-    cipher_text = decode64(payload["cipher_text"])
-    signature = decode64(payload["signature"])
-    salt = decode64(payload["salt"])
-    nonce = decode64(payload["nonce"])
-
-    if len(signature) != ED25519_SIG_SIZE:
-        raise ValueError("Неправильная длина цифровой подписи Ed25519.")
-
-    if len(salt) != SALT_SIZE:
-        raise ValueError("Некорректная длина Salt.")
-
-    if len(nonce) != NONCE_SIZE:
-        raise ValueError("Некорректная длина Nonce.")
-
-    if len(cipher_text) < GCM_TAG_SIZE:
-        raise ValueError("Некорректный размер шифротекста.")
-
-    print("[*] Проверка цифровой подписи Ed25519...")
-    public_key = load_public_key()
-
-    signed_data = {
-        **header,
-        "cipher_text": payload["cipher_text"],
-    }
-
-    try:
-        public_key.verify(signature, canonical_json(signed_data))
-    except InvalidSignature:
-        raise ValueError("Цифровая подпись недействительна! Файл был изменен или подделан.")
-
-    print("[+] Цифровая подпись подтверждена.")
-
-    print("[*] Получение ключа через Argon2id...")
-    aes_key = derive_key(password, salt)
-
-    print("[*] Расшифровка данных...")
-    aes = AESGCM(aes_key)
-    aad = canonical_json(header)
-
-    try:
-        plaintext = aes.decrypt(nonce, cipher_text, aad)
-    except InvalidTag:
-        raise ValueError("Ошибка аутентификации GCM: неверный пароль или данные повреждены.")
-
-    output_path.write_bytes(plaintext)
+        raise ValueError("Файлы не должны совпадать")
+    
     print(f"[+] Расшифровка завершена. Файл сохранен в '{output_file}'.")
 
 
@@ -387,18 +297,25 @@ def main():
         if args.command == "keygen":
             generate_signing_keys()
         elif args.command == "encrypt":
-            pwd1 = getpass.getpass("Введите пароль для шифрования: ")
-            pwd2 = getpass.getpass("Повторите пароль: ")
-            if not pwd1:
-                raise ValueError("Пароль не может быть пустым.")
-            if pwd1 != pwd2:
-                raise ValueError("Введенные пароли не совпадают.")
-            encrypt_file(args.input, args.output, pwd1)
+            pwd1 = get_password_bytearray("Введите пароль для шифрования: ")
+            pwd2 = get_password_bytearray("Повторите пароль: ")
+            try:
+              if len(pwd1) == 0:
+                  raise ValueError("Пароль не может быть пустым.")
+              if pwd1 != pwd2:
+                  raise ValueError("Введенные пароли не совпадают.")
+              encrypt_file(args.input, args.output, pwd1)
+            finally:
+                memory_cleaner(pwd1)
+                memory_cleaner(pwd2)
         elif args.command == "decrypt":
-            pwd = getpass.getpass("Введите пароль для расшифровки: ")
-            if not pwd:
-                raise ValueError("Пароль не может быть пустым.")
-            decrypt_file(args.input, args.output, pwd)
+            pwd = get_password_bytearray("Введите пароль для расшифровки: ")
+            try:
+              if len(pwd) == 0:
+                  raise ValueError("Пароль не может быть пустым.")
+              decrypt_file(args.input, args.output, pwd)
+            finally:
+                memory_cleaner(pwd)
     except Exception as e:
         print(f"[ОШИБКА] {e}")
         raise SystemExit(1)
