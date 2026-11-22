@@ -1,9 +1,14 @@
 import os
 import stat
-import base64
-import json
 import argparse
 import getpass
+import ctypes
+import struct
+
+#Delete
+import base64
+import json
+
 from pathlib import Path
 
 from argon2.low_level import hash_secret_raw, Type
@@ -22,7 +27,19 @@ from cryptography.hazmat.primitives.serialization import (
 )
 from cryptography.exceptions import InvalidSignature, InvalidTag
 
-VERSION = 1
+MAGIC = b"AESS"
+CHUNK_SIZE = 64 * 1024 # 64 KB blocks
+HEADER_FORMAT = ">4sBIII16s12s"
+HEADER_SIZE = struct.calcsize(HEADER_FORMAT) # 45 bytes
+
+MIN_TIME_COST = 2
+MAX_TIME_COST = 10
+MIN_MEMORY_COST = 32768
+MAX_MEMORY_COST = 1048576
+MIN_PARALLELISM = 1
+MAX_PARALLELISM = 16
+
+VERSION = 2
 SALT_SIZE = 16
 NONCE_SIZE = 12
 KEY_SIZE = 32
@@ -36,6 +53,49 @@ ARGON_PARALLELISM = 4
 PRIVATE_KEY_FILE = "signing_private.key"
 PUBLIC_KEY_FILE = "signing_public.key"
 
+
+def memory_cleaner(buffer: bytearray) -> None:
+    if not isinstance(buffer,bytearray) or len(buffer) == 0:
+        return
+
+    ptr = ctypes.addressof(ctypes.c_char.from_buffer(buffer))
+
+    ctypes.memset(ptr, 0, len(buffer))
+
+def derive_chunk_nonce(base_nonce: bytes, chunk_index: int) -> bytes:
+
+    base_int = int.from_bytes(base_nonce, byteorder= "big")
+    chunk_int = base_int ^ chunk_index
+    return chunk_int.to_bytes(NONCE_SIZE, byteorder= "big")
+
+def atomic_write_secret(patch: Path, data: bytes) -> None:
+
+    flags = os.O_CREAT | os.O_EXCL | os.O_WRONLY
+    fd = os.open(patch, flags, 0o600)
+
+    try:
+        with os.fdopen(fd, "wb") as f:
+            f.write(data)
+            f.flush()
+            os.fsync(f.fileno())
+    except Exception:
+        if patch.exists():
+            patch.unlink()
+        raise
+
+def get_password_bytearray(password: str) -> bytearray:
+
+    pasword_str = getpass.getpass(password)
+    return bytearray(pasword_str.encode("utf-8"))
+
+def validate_parametr_Argon2(time_cost: int, memory_cost: int, parallelism_cost: int) -> None:
+
+    if time_cost < MIN_TIME_COST or time_cost > MAX_TIME_COST:
+        raise ValueError("Недопустимый Time")
+    if memory_cost < MIN_MEMORY_COST or memory_cost > MAX_MEMORY_COST:
+        raise ValueError("Недопустимое значение Memory")
+    if parallelism_cost < MIN_PARALLELISM or parallelism_cost > MAX_PARALLELISM:
+        raise ValueError("Недопустимое значение Parallelism")
 
 def encode64(data: bytes) -> str:
     return base64.b64encode(data).decode("ascii")
@@ -54,13 +114,17 @@ def canonical_json(data: dict) -> bytes:
     ).encode("utf-8")
 
 
-def derive_key(password: str, salt: bytes) -> bytes:
+def derive_key(password: bytearray,
+               salt: bytes, time_cost: int = ARGON_TIME_COST,
+               memory_cost: int = ARGON_MEMORY_COST,
+               parallelism_cost: int = ARGON_PARALLELISM) -> bytearray:
+               
     return hash_secret_raw(
-        secret=password.encode("utf-8"),
+        secret=bytes(password),
         salt=salt,
-        time_cost=ARGON_TIME_COST,
-        memory_cost=ARGON_MEMORY_COST,
-        parallelism=ARGON_PARALLELISM,
+        time_cost=time_cost,
+        memory_cost=memory_cost,
+        parallelism=parallelism_cost,
         hash_len=KEY_SIZE,
         type=Type.ID,
     )
@@ -73,31 +137,33 @@ def generate_signing_keys():
     if priv_path.exists() or pub_path.exists():
         raise FileExistsError("Ключи уже существуют. Не перезаписывайте их.")
 
-    key_pwd1 = getpass.getpass("Придумайте пароль для защиты приватного ключа подписи Ed25519: ")
-    key_pwd2 = getpass.getpass("Повторите пароль: ")
+    key_pwd1 = get_password_bytearray("Придумайте пароль для защиты приватного ключа подписи Ed25519: ")
+    key_pwd2 = get_password_bytearray("Повторите пароль: ")
 
-    if not key_pwd1 or key_pwd1 != key_pwd2:
+    try:
+       if len(key_pwd1) == 0  or key_pwd1 != key_pwd2:
         raise ValueError("Пароли для ключа не совпадают или пустые") 
 
-    private_key = Ed25519PrivateKey.generate()
-    public_key = private_key.public_key()
+       private_key = Ed25519PrivateKey.generate()
+       public_key = private_key.public_key()
 
-    private_bytes = private_key.private_bytes(
-        encoding=Encoding.PEM,
-        format=PrivateFormat.PKCS8,
-        encryption_algorithm=BestAvailableEncryption(key_pwd1.encode("utf-8")),
-    )
+       private_bytes = private_key.private_bytes(
+           encoding=Encoding.PEM,
+           format=PrivateFormat.PKCS8,
+           encryption_algorithm=BestAvailableEncryption(bytes(key_pwd1)),
+       )
 
-    public_bytes = public_key.public_bytes(
-        encoding=Encoding.PEM,
-        format=PublicFormat.SubjectPublicKeyInfo,
-    )
+       public_bytes = public_key.public_bytes(
+           encoding=Encoding.PEM,
+           format=PublicFormat.SubjectPublicKeyInfo,
+       )
 
-    priv_path.write_bytes(private_bytes)
-    pub_path.write_bytes(public_bytes)
+       atomic_write_secret(priv_path, private_bytes)
+       pub_path.write_bytes(public_bytes)
 
-    if os.name == "posix":
-        os.chmod(priv_path, 0o600)
+    finally:
+        memory_cleaner(key_pwd1)
+        memory_cleaner(key_pwd2)
 
     print("[+] Ключи успешно созданы:")
     print(f"    Приватный ключ: {PRIVATE_KEY_FILE}")
@@ -110,7 +176,6 @@ def load_private_key() -> Ed25519PrivateKey:
         raise FileNotFoundError(
             f"Приватный ключ '{PRIVATE_KEY_FILE}' не найден. Сначала выполните команду keygen."
         )
-    key_pwd = getpass.getpass("Введите пароль от приватного ключа подписи")
 
     if os.name == "posix":
         mode = stat.S_IMODE(priv_path.stat().st_mode)
@@ -119,9 +184,12 @@ def load_private_key() -> Ed25519PrivateKey:
                 f"[!] ПРЕДУПРЕЖДЕНИЕ: небезопасные права доступа ({oct(mode)}) для {PRIVATE_KEY_FILE}. Рекомендуется 0o600."
             )
 
-    key_data = priv_path.read_bytes()
-    return load_pem_private_key(key_data,password=key_pwd.encode("utf-8"))
-
+    key_pwd = get_password_bytearray("Введите пароль от приватного ключа подписи")
+    try:
+        key_data = priv_path.read_bytes()
+        return load_pem_private_key(key_data,password=bytes(key_pwd))
+    finally:
+        memory_cleaner(key_pwd)
 
 def load_public_key() -> Ed25519PublicKey:
     pub_path = Path(PUBLIC_KEY_FILE)

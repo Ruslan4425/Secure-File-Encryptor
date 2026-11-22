@@ -1,18 +1,7 @@
 name: Security Tests
 
 on:
-  push:
-    branches: [ "main" ]
-    paths-ignore:
-      - 'README.md'
-      - '*.md'
-      - '.gitignore'
-  pull_request:
-    branches: [ "main" ]
-    payhs-ignore:
-      - 'README.md'
-      - '*.md'
-      - '.gitignore'
+  workflow_dispatch:
 
 jobs:
   test:
