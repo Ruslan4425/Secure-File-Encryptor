@@ -1,3 +1,4 @@
+
 import os
 import stat
 import argparse
@@ -36,7 +37,7 @@ KEY_SIZE = 32
 GCM_TAG_SIZE = 16
 ED25519_SIG_SIZE = 64
 
-# --- ПАРАМЕТРЫ ARGON2ID ---
+# --- ARGON2ID PARAMETERS ---
 MIN_TIME_COST = 2
 MAX_TIME_COST = 10
 MIN_MEMORY_COST = 32768
@@ -53,11 +54,11 @@ PUBLIC_KEY_FILE = "signing_public.key"
 
 
 # ==========================================
-# ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ И БЕЗОПАСНОСТЬ
+# HELPER FUNCTIONS AND SECURITY
 # ==========================================
 
 def memory_cleaner(buffer: bytearray) -> None:
-    """Обнуляет содержимое bytearray в оперативной памяти."""
+    """Clears the contents of a bytearray in memory."""
     if not isinstance(buffer, bytearray) or len(buffer) == 0:
         return
     ptr = ctypes.addressof(ctypes.c_char.from_buffer(buffer))
@@ -65,14 +66,14 @@ def memory_cleaner(buffer: bytearray) -> None:
 
 
 def derive_chunk_nonce(base_nonce: bytes, chunk_index: int) -> bytes:
-    """Генерирует уникальный Nonce для каждого блока на основе базового Nonce и индекса."""
+    """Generates a unique nonce for each chunk based on the base nonce and index."""
     base_int = int.from_bytes(base_nonce, byteorder="big")
     chunk_int = base_int ^ chunk_index
     return chunk_int.to_bytes(NONCE_SIZE, byteorder="big")
 
 
 def atomic_write_secret(path: Path, data: bytes) -> None:
-    """Атомарно записывает секретный файл с правами доступа 0o600."""
+    """Atomically writes a secret file with 0o600 permissions."""
     flags = os.O_CREAT | os.O_EXCL | os.O_WRONLY
     fd = os.open(path, flags, 0o600)
     try:
@@ -87,19 +88,19 @@ def atomic_write_secret(path: Path, data: bytes) -> None:
 
 
 def get_password_bytearray(prompt: str) -> bytearray:
-    """Безопасно запрашивает пароль и возвращает его как изменяемый bytearray."""
+    """Securely prompts for a password and returns it as a mutable bytearray."""
     password_str = getpass.getpass(prompt)
     return bytearray(password_str.encode("utf-8"))
 
 
 def validate_argon2_params(time_cost: int, memory_cost: int, parallelism_cost: int) -> None:
-    """Проверяет параметры Argon2id из заголовка файла для защиты от DoS."""
+    """Validates Argon2id parameters from the file header to prevent DoS attacks."""
     if not (MIN_TIME_COST <= time_cost <= MAX_TIME_COST):
-        raise ValueError(f"Недопустимое значение Time Cost: {time_cost}")
+        raise ValueError(f"Invalid Time Cost value: {time_cost}")
     if not (MIN_MEMORY_COST <= memory_cost <= MAX_MEMORY_COST):
-        raise ValueError(f"Недопустимое значение Memory Cost: {memory_cost}")
+        raise ValueError(f"Invalid Memory Cost value: {memory_cost}")
     if not (MIN_PARALLELISM <= parallelism_cost <= MAX_PARALLELISM):
-        raise ValueError(f"Недопустимое значение Parallelism: {parallelism_cost}")
+        raise ValueError(f"Invalid Parallelism value: {parallelism_cost}")
 
 
 def derive_key(
@@ -127,14 +128,14 @@ def generate_signing_keys() -> None:
     pub_path = Path(PUBLIC_KEY_FILE)
 
     if priv_path.exists() or pub_path.exists():
-        raise FileExistsError("Ключи уже существуют. Удалите или переместите старые перед генерацией.")
+        raise FileExistsError("Keys already exist. Delete or move the old ones before generating new keys.")
 
-    key_pwd1 = get_password_bytearray("Придумайте пароль для защиты приватного ключа Ed25519: ")
-    key_pwd2 = get_password_bytearray("Повторите пароль: ")
+    key_pwd1 = get_password_bytearray("Enter a password to protect the Ed25519 private key: ")
+    key_pwd2 = get_password_bytearray("Repeat password: ")
 
     try:
         if len(key_pwd1) == 0 or key_pwd1 != key_pwd2:
-            raise ValueError("Пароли для ключа не совпадают или пустые.")
+            raise ValueError("Key passwords do not match or are empty.")
 
         private_key = Ed25519PrivateKey.generate()
         public_key = private_key.public_key()
@@ -155,9 +156,9 @@ def generate_signing_keys() -> None:
         memory_cleaner(key_pwd1)
         memory_cleaner(key_pwd2)
 
-    print("[+] Ключи успешно созданы:")
-    print(f"    Приватный ключ: {PRIVATE_KEY_FILE}")
-    print(f"    Публичный ключ: {PUBLIC_KEY_FILE}")
+    print("[+] Keys successfully generated:")
+    print(f"    Private key: {PRIVATE_KEY_FILE}")
+    print(f"    Public key: {PUBLIC_KEY_FILE}")
 
 
 def load_private_key() -> Ed25519PrivateKey:
@@ -165,18 +166,18 @@ def load_private_key() -> Ed25519PrivateKey:
     priv_path = Path(PRIVATE_KEY_FILE)
     if not priv_path.is_file():
         raise FileNotFoundError(
-            f"Приватный ключ '{PRIVATE_KEY_FILE}' не найден. Сначала выполните команду keygen."
+            f"Private key '{PRIVATE_KEY_FILE}' not found. Run the keygen command first."
         )
 
     if os.name == "posix":
         mode = stat.S_IMODE(priv_path.stat().st_mode)
         if mode != 0o600:
             print(
-                f"[!] ПРЕДУПРЕЖДЕНИЕ: небезопасные права доступа ({oct(mode)}) для {PRIVATE_KEY_FILE}. "
-                "Рекомендуется 0o600."
+                f"[!] WARNING: insecure permissions ({oct(mode)}) for {PRIVATE_KEY_FILE}. "
+                "0o600 is recommended."
             )
 
-    key_pwd = get_password_bytearray("Введите пароль от приватного ключа подписи: ")
+    key_pwd = get_password_bytearray("Enter the private signing key password: ")
     try:
         key_data = priv_path.read_bytes()
         return load_pem_private_key(key_data, password=bytes(key_pwd))
@@ -188,7 +189,7 @@ def load_public_key() -> Ed25519PublicKey:
 
     pub_path = Path(PUBLIC_KEY_FILE)
     if not pub_path.is_file():
-        raise FileNotFoundError(f"Публичный ключ '{PUBLIC_KEY_FILE}' не найден.")
+        raise FileNotFoundError(f"Public key '{PUBLIC_KEY_FILE}' not found.")
     return load_pem_public_key(pub_path.read_bytes())
 
 def encrypt_file(input_file: str, output_file: str, password: bytearray) -> None:
@@ -198,18 +199,18 @@ def encrypt_file(input_file: str, output_file: str, password: bytearray) -> None
     tmp_path = output_path.with_suffix(output_path.suffix + ".tmp")
 
     if not input_path.is_file():
-        raise FileNotFoundError(f"Исходный файл '{input_file}' не найден.")
+        raise FileNotFoundError(f"Input file '{input_file}' not found.")
     if input_path.resolve() == output_path.resolve():
-        raise ValueError("Входной и выходной файлы не могут совпадать.")
+        raise ValueError("Input and output files cannot be the same.")
 
-    print("[*] Загрузка ключа подписи и генерация параметров...")
+    print("[*] Loading signing key and generating parameters...")
     private_key = load_private_key()
     salt = os.urandom(SALT_SIZE)
     base_nonce = os.urandom(NONCE_SIZE)
     aes_key = None
 
     try:
-        print("[*] Выработка ключа шифрования Argon2id...")
+        print("[*] Deriving encryption key using Argon2id...")
         aes_key = derive_key(password, salt)
         aes = AESGCM(bytes(aes_key))
 
@@ -227,7 +228,7 @@ def encrypt_file(input_file: str, output_file: str, password: bytearray) -> None
         hasher = hashlib.blake2b(digest_size=BLAKE2B_DIGEST_SIZE)
         hasher.update(header)
 
-        print("[*] Шифрование файла...")
+        print("[*] Encrypting file...")
         with open(input_path, "rb") as f_in, open(tmp_path, "wb") as f_out:
             f_out.write(header)
             chunk_index = 0
@@ -266,7 +267,7 @@ def encrypt_file(input_file: str, output_file: str, password: bytearray) -> None
         if aes_key is not None:
             memory_cleaner(aes_key)
 
-    print(f"[+] Шифрование и подпись завершены. Результат: '{output_file}'.")
+    print(f"[+] Encryption and signing completed. Result: '{output_file}'.")
 
 def decrypt_file(input_file: str, output_file: str) -> None:
 
@@ -275,14 +276,14 @@ def decrypt_file(input_file: str, output_file: str) -> None:
     tmp_path = output_path.with_suffix(output_path.suffix + ".tmp")
 
     if not encrypted_path.is_file():
-        raise FileNotFoundError(f"Файл '{input_file}' не найден.")
+        raise FileNotFoundError(f"File '{input_file}' not found.")
     if encrypted_path.resolve() == output_path.resolve():
-        raise ValueError("Входной и выходной файлы не могут совпадать.")
+        raise ValueError("Input and output files cannot be the same.")
 
     file_size = encrypted_path.stat().st_size
     min_size = HEADER_SIZE + 4 + GCM_TAG_SIZE + ED25519_SIG_SIZE
     if file_size < min_size:
-        raise ValueError("Файл поврежден или имеет неверный размер.")
+        raise ValueError("File is corrupted or has an invalid size.")
 
     public_key = load_public_key()
     password = None
@@ -291,16 +292,16 @@ def decrypt_file(input_file: str, output_file: str) -> None:
     try:
         with open(encrypted_path, "rb") as f_in:
 
-            print("[*] Проверка цифровой подписи Ed25519...")
+            print("[*] Verifying Ed25519 digital signature...")
             header = f_in.read(HEADER_SIZE)
             magic, version, time_cost, mem_cost, parallelism, salt, base_nonce = struct.unpack(
                 HEADER_FORMAT, header
             )
 
             if magic != MAGIC:
-                raise ValueError("Неверный формат файла (несовпадение MAGIC).")
+                raise ValueError("Invalid file format (MAGIC mismatch).")
             if version != VERSION:
-                raise ValueError(f"Неподдерживаемая версия формата: {version}.")
+                raise ValueError(f"Unsupported format version: {version}.")
 
             validate_argon2_params(time_cost, mem_cost, parallelism)
 
@@ -311,16 +312,16 @@ def decrypt_file(input_file: str, output_file: str) -> None:
             while bytes_left > 0:
                 len_bytes = f_in.read(4)
                 if len(len_bytes) != 4:
-                    raise ValueError("Неожиданный конец файла при чтении длины блока.")
+                    raise ValueError("Unexpected end of file while reading chunk length.")
                 bytes_left -= 4
 
                 (chunk_len,) = struct.unpack(">I", len_bytes)
                 if chunk_len > bytes_left:
-                    raise ValueError("Файл обрезан или поврежден (неверная длина блока).")
+                    raise ValueError("File is truncated or corrupted (invalid chunk length).")
 
                 cipher_text = f_in.read(chunk_len)
                 if len(cipher_text) != chunk_len:
-                    raise ValueError("Не удалось прочитать блок целиком.")
+                    raise ValueError("Failed to read the entire chunk.")
                 bytes_left -= chunk_len
 
                 hasher.update(len_bytes)
@@ -328,19 +329,19 @@ def decrypt_file(input_file: str, output_file: str) -> None:
 
             signature = f_in.read(ED25519_SIG_SIZE)
             if len(signature) != ED25519_SIG_SIZE:
-                raise ValueError("Подпись отсутствует или повреждена.")
+                raise ValueError("Signature is missing or corrupted.")
 
             try:
                 public_key.verify(signature, hasher.digest())
             except InvalidSignature:
-                raise ValueError("ПОДПИСЬ НЕДЕЙСТВИТЕЛЬНА! Файл изменен или подменен.")
+                raise ValueError("SIGNATURE IS INVALID! The file has been modified or tampered with.")
 
-            print("[+] Подпись подтверждена.")
-            password = get_password_bytearray("Введите пароль для расшифровки файла: ")
+            print("[+] Signature verified.")
+            password = get_password_bytearray("Enter the password to decrypt the file: ")
             if len(password) == 0:
-                raise ValueError("Пароль не может быть пустым.")
+                raise ValueError("Password cannot be empty.")
 
-            print("[*] Выработка ключа и расшифровка...")
+            print("[*] Deriving key and decrypting...")
             aes_key = derive_key(password, salt, time_cost, mem_cost, parallelism)
             aes = AESGCM(bytes(aes_key))
 
@@ -363,7 +364,7 @@ def decrypt_file(input_file: str, output_file: str) -> None:
                     try:
                         plain_chunk = aes.decrypt(chunk_nonce, cipher_text, aad)
                     except InvalidTag:
-                        raise ValueError("Ошибка расшифровки (неверный пароль или поврежденный блок).")
+                        raise ValueError("Decryption failed (incorrect password or corrupted chunk).")
 
                     f_out.write(plain_chunk)
                     chunk_index += 1
@@ -382,23 +383,23 @@ def decrypt_file(input_file: str, output_file: str) -> None:
         if aes_key is not None:
             memory_cleaner(aes_key)
 
-    print(f"[+] Расшифровка завершена. Результат сохранен в '{output_file}'.")
+    print(f"[+] Decryption completed. Result saved to '{output_file}'.")
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Утилита для шифрования и подписи файлов (AES-256-GCM + Argon2id + Ed25519)"
+        description="File encryption and signing utility (AES-256-GCM + Argon2id + Ed25519)"
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
 
-    subparsers.add_parser("keygen", help="Сгенерировать пару ключей подписи Ed25519")
+    subparsers.add_parser("keygen", help="Generate an Ed25519 signing key pair")
 
-    enc_parser = subparsers.add_parser("encrypt", help="Зашифровать и подписать файл")
-    enc_parser.add_argument("input", help="Исходный файл")
-    enc_parser.add_argument("output", help="Зашифрованный выходной файл")
+    enc_parser = subparsers.add_parser("encrypt", help="Encrypt and sign a file")
+    enc_parser.add_argument("input", help="Input file")
+    enc_parser.add_argument("output", help="Encrypted output file")
 
-    dec_parser = subparsers.add_parser("decrypt", help="Проверить подпись и расшифровать файл")
-    dec_parser.add_argument("input", help="Зашифрованный файл")
-    dec_parser.add_argument("output", help="Расшифрованный выходной файл")
+    dec_parser = subparsers.add_parser("decrypt", help="Verify signature and decrypt a file")
+    dec_parser.add_argument("input", help="Encrypted file")
+    dec_parser.add_argument("output", help="Decrypted output file")
 
     args = parser.parse_args()
 
@@ -407,11 +408,11 @@ def main() -> None:
             generate_signing_keys()
 
         elif args.command == "encrypt":
-            pwd1 = get_password_bytearray("Придумайте пароль для шифрования файла: ")
-            pwd2 = get_password_bytearray("Повторите пароль: ")
+            pwd1 = get_password_bytearray("Enter a password to encrypt the file: ")
+            pwd2 = get_password_bytearray("Repeat password: ")
             try:
                 if len(pwd1) == 0 or pwd1 != pwd2:
-                    raise ValueError("Пароли не совпадают или пустые.")
+                    raise ValueError("Passwords do not match or are empty.")
                 encrypt_file(args.input, args.output, pwd1)
             finally:
                 memory_cleaner(pwd1)
@@ -421,9 +422,8 @@ def main() -> None:
             decrypt_file(args.input, args.output)
 
     except Exception as e:
-        print(f"[-] Ошибка: {e}")
+        print(f"[-] Error: {e}")
 
 
 if __name__ == "__main__":
     main()
-
