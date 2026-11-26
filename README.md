@@ -1,6 +1,6 @@
 <div align="center">
 
-🌐 **Language:** **English** | [Русский](README.md)
+🌐 **Language:** **English** | [Русский](README.ru.md)
 
 # 🔐 Secure File Encryptor (CLI)
 
