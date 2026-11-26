@@ -117,7 +117,3 @@ pytest -v
 ## ⚠️ Disclaimer
 
 This project was created for educational purposes and to demonstrate secure software development (AppSec) practices. The software is provided "as is", without warranty of any kind. Always keep backups of important files before encrypting them.
-
-## Disclaimer
-This project was created for educational and portfolio purposes. The software is provided "as is", without warranty of any kind. Always keep backups of important files before encrypting them.
-
